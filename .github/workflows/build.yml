@@ -53,13 +53,13 @@ jobs:
         } else {
           $laf_backend = 'none'
         }
-        
+
         if (${{ matrix.scripting }} -eq 'lua') {
           $enable_scripting = 'on'
         } else {
           $enable_scripting = 'off'
         }
-        
+
         cmake -S . -B build -G Ninja `
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
           -DENABLE_TESTS=OFF `
