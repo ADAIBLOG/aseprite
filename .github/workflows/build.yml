@@ -40,25 +40,26 @@ jobs:
         7z x Skia-Windows-Release-x64.zip -oskia
 
     - name: Setup MSVC
+      shell: powershell
       run: |
-        CALL "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        SET VSPATH=%errorlevel%
-        CALL "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+        $vswhere_path = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        & "$vswhere_path\VC\Auxiliary\Build\vcvars64.bat"
 
     - name: Generating Makefiles
+      shell: powershell
       run: |
         if (${{ matrix.ui }} -eq 'gui') {
           $laf_backend = 'skia'
         } else {
           $laf_backend = 'none'
         }
-
+        
         if (${{ matrix.scripting }} -eq 'lua') {
           $enable_scripting = 'on'
         } else {
           $enable_scripting = 'off'
         }
-
+        
         cmake -S . -B build -G Ninja `
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
           -DENABLE_TESTS=OFF `
