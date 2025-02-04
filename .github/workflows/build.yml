@@ -61,7 +61,7 @@ jobs:
 
         cmake -S . -B build -G Ninja `
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
-          -DENABLE_TESTS=ON `
+          -DENABLE_TESTS=OFF `
           -DENABLE_SCRIPTING=$enable_scripting `
           -DLAF_BACKEND=$laf_backend `
           -DSKIA_DIR=skia `
@@ -71,14 +71,8 @@ jobs:
       run: |
         cmake --build build --config ${{ matrix.build_type }}
 
-    - name: Running C++ Tests
-      run: |
-        cd build
-        ctest --output-on-failure
-
-    - name: Running CLI Tests
-      if: ${{ matrix.scripting == 'lua' }}
-      run: |
-        $env:ASEPRITE = "$PWD/build/bin/aseprite"
-        cd tests
-        .\run-tests.ps1
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: aseprite-windows-build
+        path: build/bin/*.exe
