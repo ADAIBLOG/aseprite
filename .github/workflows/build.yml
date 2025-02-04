@@ -1,42 +1,84 @@
 name: build
-on: [push]
+
+on: [push, pull_request]
+
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest]
-        build_type: [RelWithDebInfo]
-        ui: [gui]
-        scripting: [lua]
+        build_type: [RelWithDebInfo, Debug]
+        ui: [gui, cli]
+        scripting: [lua, noscripts]
+        exclude:
+          - build_type: Debug
+            ui: gui
+          - build_type: RelWithDebInfo
+            ui: cli
+          - build_type: RelWithDebInfo
+            scripting: noscripts
+
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
-      - name: Install Skia
-        shell: bash
-        run: |
-          wget https://github.com/aseprite/skia/releases/latest/download/Skia-Windows-Release-x64.zip
-          unzip Skia-Windows-Release-x64.zip -d skia
-      - uses: ilammy/msvc-dev-cmd@v1
-      - name: Generating Makefiles
-        shell: bash
-        run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DLAF_BACKEND=skia \
-            -DSKIA_DIR=skia \
-            -DSKIA_LIBRARY_DIR=skia/out/Release-x64 \
-            -DSKIA_LIBRARY=skia/out/Release-x64/skia.lib
-      - name: Compiling
-        shell: bash
-        run: |
-          cd build && ninja
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: asepprite-windows
-          path: |
-            build/bin/aseprite.exe
-            build/bin/data
+    - uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+
+    - name: Install Dependencies
+      run: |
+        choco install -y vswhere
+        choco install -y ninja
+        choco install -y cmake
+        choco install -y git
+        choco install -y python
+        choco install -y 7zip
+
+    - name: Install Skia
+      if: ${{ matrix.ui == 'gui' }}
+      run: |
+        Invoke-WebRequest -Uri https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip -OutFile Skia-Windows-Release-x64.zip
+        7z x Skia-Windows-Release-x64.zip -oskia
+
+    - name: Setup MSVC
+      run: |
+        CALL "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        SET VSPATH=%errorlevel%
+        CALL "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+
+    - name: Generating Makefiles
+      run: |
+        if (${{ matrix.ui }} -eq 'gui') {
+          $laf_backend = 'skia'
+        } else {
+          $laf_backend = 'none'
+        }
+
+        if (${{ matrix.scripting }} -eq 'lua') {
+          $enable_scripting = 'on'
+        } else {
+          $enable_scripting = 'off'
+        }
+
+        cmake -S . -B build -G Ninja `
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+          -DENABLE_TESTS=ON `
+          -DENABLE_SCRIPTING=$enable_scripting `
+          -DLAF_BACKEND=$laf_backend `
+          -DSKIA_DIR=skia `
+          -DSKIA_LIBRARY_DIR=skia/out/Release-x64
+
+    - name: Compiling
+      run: |
+        cmake --build build --config ${{ matrix.build_type }}
+
+    - name: Running C++ Tests
+      run: |
+        cd build
+        ctest --output-on-failure
+
+    - name: Running CLI Tests
+      if: ${{ matrix.scripting == 'lua' }}
+      run: |
+        $env:ASEPRITE = "$PWD/build/bin/aseprite"
+        cd tests
+        .\run-tests.ps1
