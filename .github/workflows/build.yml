@@ -2,61 +2,54 @@ name: build
 on: [push, pull_request]
 jobs:
   build:
-    runs-on: windows-latest
-    env:
-      SKIA_DIR: ./skia
-      SKIA_LIBRARY_DIR: ./skia/out/Release-x64
-      SKIA_LIBRARY: ./skia/out/Release-x64/skia.lib
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        build_type: [Release]
+        enable_ui: [on]
+        include:
+          - os: windows-latest
+            build_type: Release
+            enable_ui: on
     steps:
     - uses: actions/checkout@v3
       with:
         submodules: 'recursive'
-    - name: Cache Skia and Libcrypto
-      id: cache-deps
-      uses: actions/cache@v3
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1
+      if: runner.os == 'Linux'
       with:
-        path: |
-          skia.zip
-          libcrypto-1_1-x64.dll
-        key: ${{ runner.os }}-deps-${{ hashFiles('skia.zip', 'libcrypto-1_1-x64.dll') }}
-        restore-keys: ${{ runner.os }}-deps-
-    - name: Download and Extract Dependencies
-      if: steps.cache-deps.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        # 下载 Skia
-        curl -L https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip --output skia.zip || exit 1
-        # 下载 OpenSSL 安装包
-        curl -L https://slproweb.com/download/Win64OpenSSL-1_1_1w.exe --output openssl.exe || exit 1
-        # 提取 libcrypto-1_1-x64.dll
-        7z x openssl.exe -oopenssl_extracted libcrypto-1_1-x64.dll || exit 1
-        mv openssl_extracted/libcrypto-1_1-x64.dll . || exit 1
-    - name: Install 7zip
-      run: choco install 7zip -y
+        key: ${{ matrix.os }}-${{ matrix.enable_ui }}
     - uses: seanmiddleditch/gha-setup-ninja@master
     - uses: ilammy/msvc-dev-cmd@v1
+      if: runner.os == 'Windows'
     - name: Generating Makefiles
       shell: bash
       run: |
         export enable_ccache=off
-        7z x skia.zip || exit 1
+        curl -L https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip
+        curl -L https://slproweb.com/download/Win64OpenSSL-1_1_1w.exe --output openssl.exe
+        7z x openssl.exe -oopenssl_extracted libcrypto-1_1-x64.dll
+        mv openssl_extracted/libcrypto-1_1-x64.dll .
+        7z x skia.zip
         cmake -S . -B build -G Ninja \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DENABLE_UI=on \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DENABLE_UI=${{ matrix.enable_ui }} \
           -DENABLE_CCACHE=$enable_ccache \
           -DLAF_BACKEND=skia \
-          -DSKIA_DIR=${{ env.SKIA_DIR }} \
-          -DSKIA_LIBRARY_DIR=${{ env.SKIA_LIBRARY_DIR }} \
-          -DSKIA_LIBRARY=${{ env.SKIA_LIBRARY }} \
-          --log-level=VERBOSE || exit 1
+          -DSKIA_DIR=./skia \
+          -DSKIA_LIBRARY_DIR=./skia/out/Release-x64 \
+          -DSKIA_LIBRARY=./skia/out/Release-x64/skia.lib
     - name: Compiling
       shell: bash
       run: |
-        cd build && ninja -j2 || exit 1
+        cd build && ninja
     - uses: actions/upload-artifact@v3
       with:
         name: aseprite
         path: |
           libcrypto-1_1-x64.dll
-          build/bin/data
-          build/bin/aseprite.exe
+          D:/a/aseprite/aseprite/build/bin/data
+          D:/a/aseprite/aseprite/build/bin/aseprite.exe
