@@ -22,15 +22,18 @@ jobs:
     - uses: seanmiddleditch/gha-setup-ninja@master
     - uses: ilammy/msvc-dev-cmd@v1
       if: runner.os == 'Windows'
+    - name: Download and Install Dependencies
+      shell: cmd
+      run: |
+        curl -L https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip -o skia.zip
+        curl -L https://slproweb.com/download/Win64OpenSSL-1_1_1w.exe -o openssl.exe
+        openssl.exe /SILENT /DIR="openssl_install"
+        copy openssl_install\libcrypto-1_1-x64.dll .
+        7z x skia.zip
     - name: Generating Makefiles
       shell: bash
       run: |
         export enable_ccache=off
-        curl -L https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip --output skia.zip
-        curl -L https://slproweb.com/download/Win64OpenSSL-1_1_1w.exe --output openssl.exe
-        7z x openssl.exe -oopenssl_extracted libcrypto-1_1-x64.dll
-        mv openssl_extracted/libcrypto-1_1-x64.dll .
-        7z x skia.zip
         cmake -S . -B build -G Ninja \
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
           -DENABLE_UI=${{ matrix.enable_ui }} \
@@ -43,24 +46,10 @@ jobs:
       shell: bash
       run: |
         cd build && ninja
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v3
       with:
         name: aseprite
         path: |
           libcrypto-1_1-x64.dll
           build/bin/data
           build/bin/aseprite.exe
-
-  verify:
-    needs: build
-    runs-on: windows-latest
-    steps:
-    - name: Download Artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: aseprite
-        path: downloaded_artifacts
-    - name: List Downloaded Files
-      shell: bash
-      run: |
-        ls -R downloaded_artifacts
