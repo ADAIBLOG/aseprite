@@ -1,52 +1,53 @@
 name: build
 on: [push, pull_request]
-
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        build_type: [Release]
+        enable_ui: [on]
+        include:
+          - os: windows-latest
+            build_type: Release
+            enable_ui: on
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v3
       with:
         submodules: 'recursive'
-    - run: choco install 7zip -y
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1
+      if: runner.os == 'Linux'
+      with:
+        key: ${{ matrix.os }}-${{ matrix.enable_ui }}
     - uses: seanmiddleditch/gha-setup-ninja@master
     - uses: ilammy/msvc-dev-cmd@v1
-    - shell: cmd
-      run: |
-        curl -L https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip -o skia.zip
-        curl -L https://slproweb.com/download/Win64OpenSSL-1_1_1w.exe -o openssl.exe
-        dir skia.zip || exit 1 # 检查 skia.zip 是否下载成功
-        openssl.exe /SILENT /DIR="openssl_install"
-        copy openssl_install\libcrypto-1_1-x64.dll .
-        7z x skia.zip -oskia || exit 1 # 解压到 skia 目录并检查是否成功
-    - shell: cmd
-      run: |
-        dir skia # 检查 skia 目录是否存在
-        dir skia\out\Release-x64 # 检查 Release-x64 目录
-        dir skia\out\Release-x64\skia.lib # 检查 skia.lib 是否存在
-    - shell: bash
+      if: runner.os == 'Windows'
+    - name: Generating Makefiles
+      shell: bash
       run: |
         export enable_ccache=off
+        curl -L https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip --output skia.zip
+        curl -L https://github.com/blueloveTH/aseprite/releases/download/v0.01/libcrypto-1_1-x64.dll --output libcrypto-1_1-x64.dll
+        7z x skia.zip -oskia
         cmake -S . -B build -G Ninja \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DENABLE_UI=on \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DENABLE_UI=${{ matrix.enable_ui }} \
           -DENABLE_CCACHE=$enable_ccache \
           -DLAF_BACKEND=skia \
           -DSKIA_DIR=./skia \
           -DSKIA_LIBRARY_DIR=./skia/out/Release-x64 \
           -DSKIA_LIBRARY=./skia/out/Release-x64/skia.lib
-    - shell: bash
+    - name: Compiling
+      shell: bash
       run: |
         cd build && ninja
-    - shell: cmd
-      run: |
-        dir libcrypto-1_1-x64.dll
-        dir build\bin\data
-        dir build\bin\aseprite.exe
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v3
       with:
         name: aseprite
         path: |
           libcrypto-1_1-x64.dll
-          build/bin/data
-          build/bin/aseprite.exe
+          D:/a/aseprite/aseprite/build/bin/data
+          D:/a/aseprite/aseprite/build/bin/aseprite.exe
