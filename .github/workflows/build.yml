@@ -10,26 +10,28 @@ jobs:
 
     steps:
     - name: 检出仓库及子模块
-      uses: actions/checkout@v4  # 升级到最新 checkout 版本
+      uses: actions/checkout@v4
       with:
         submodules: recursive
 
     - name: 安装依赖项
       run: |
-        # 安装 Chocolatey（如未预装）
+        # 安装 Chocolatey
         Set-ExecutionPolicy Bypass -Scope Process -Force
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
         iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
-
-        # 通过 Chocolatey 安装工具
+        
+        # 安装必要工具
         choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
         choco install -y ninja
         choco install -y 7zip
 
         # 安装 VS 2022 构建工具
         Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_BuildTools.exe" -OutFile vs_BuildTools.exe
-        Start-Process -Wait -FilePath .\vs_BuildTools.exe -ArgumentList `
-          '--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.Windows10SDK --quiet'
+        Start-Process -Wait -FilePath .\vs_BuildTools.exe -ArgumentList @(
+          '--add', 'Microsoft.VisualStudio.Workload.VCTools',
+          '--add', 'Microsoft.VisualStudio.Component.Windows10SDK',
+          '--quiet'
+        )
 
     - name: 下载 Skia
       run: |
@@ -37,28 +39,38 @@ jobs:
         Invoke-WebRequest -Uri "https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip" -OutFile skia.zip
         7z x skia.zip -o"deps/skia" -y
 
+    - name: 创建并验证构建目录
+      run: |
+        # 显式创建 build 目录（强制使用 Windows 路径格式）
+        mkdir build -Force
+        # 确认目录存在
+        if (-not (Test-Path -Path .\build)) {
+          Write-Error "构建目录创建失败!"
+          exit 1
+        }
+
     - name: 配置 CMake
-      working-directory: ./build
+      working-directory: ${{ github.workspace }}\build  # 显式声明 Windows 路径格式
       run: |
         cmake -G "Ninja" `
           -DCMAKE_BUILD_TYPE=Release `
           -DLAF_BACKEND=skia `
-          -DSKIA_DIR="$env:GITHUB_WORKSPACE/deps/skia" `
-          ..
+          -DSKIA_DIR="$env:GITHUB_WORKSPACE\deps\skia" `
+          "$env:GITHUB_WORKSPACE"
 
     - name: 编译
-      working-directory: ./build
+      working-directory: ${{ github.workspace }}\build
       run: ninja aseprite
 
-    - name: 收集运行时依赖
+    - name: 收集依赖文件
       run: |
-        Copy-Item -Path "deps/skia/icudtl.dat" -Destination "build/bin"
-        Copy-Item -Path "deps/skia/*.dll" -Destination "build/bin"
+        Copy-Item -Path deps\skia\icudtl.dat -Destination build\bin
+        Copy-Item -Path deps\skia\*.dll -Destination build\bin
 
     - name: 上传制品
-      uses: actions/upload-artifact@v4  # 必须使用 v4 或更新版本
+      uses: actions/upload-artifact@v4
       with:
-        name: aseprite-windows
+        name: asepprite-windows
         path: |
           build/bin/aseprite.exe
           build/bin/*.dll
