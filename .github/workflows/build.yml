@@ -1,98 +1,63 @@
-name: Build Aseprite (Windows)
-
-on:
-  push:
-  workflow_dispatch:
-
+name: build-windows-x64
+on: [push, pull_request]
 jobs:
   build:
     runs-on: windows-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Release]
+        enable_ui: [on]
     steps:
-    - name: 检出仓库及子模块
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
-        submodules: recursive  # 确保子模块完整初始化
-        fetch-depth: 0        # 防止浅克隆导致子模块问题
+        submodules: 'recursive'
 
-    - name: 安装依赖项
-      shell: pwsh
+    # 安装必要工具
+    - name: Install 7-Zip
+      shell: powershell
+      run: choco install 7zip -y --no-progress
+
+    # 下载预编译依赖
+    - name: Download Skia & Dependencies
+      shell: bash
       run: |
-        # 强制安装 Chocolatey
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        refreshenv
+        curl -L -o skia.zip https://github.com/blueloveTH/aseprite/releases/download/v0.01/skia.zip
+        curl -L -o libcrypto-1_1-x64.dll https://github.com/blueloveTH/aseprite/releases/download/v0.01/libcrypto-1_1-x64.dll
+        7z x skia.zip -o./skia
 
-        # 安装构建工具
-        choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
-        choco install -y ninja --version=1.11.1  # 固定 Ninja 版本
-        choco install -y 7zip
+    # 配置构建环境
+    - uses: seanmiddleditch/gha-setup-ninja@master
+    - uses: ilammy/msvc-dev-cmd@v1
 
-        # 安装完整 Visual Studio 2022 构建工具
-        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_BuildTools.exe" -OutFile vs_BuildTools.exe
-        Start-Process -Wait -FilePath .\vs_BuildTools.exe -ArgumentList @(
-          '--add', 'Microsoft.VisualStudio.Workload.VCTools',
-          '--add', 'Microsoft.VisualStudio.Component.Windows10SDK.20348',  # 明确指定 SDK 版本
-          '--add', 'Microsoft.VisualStudio.Component.VC.CMake.Project',
-          '--quiet', '--norestart', '--nocache'
-        )
-
-    - name: 下载 Skia 依赖
-      shell: pwsh
+    # 生成构建文件
+    - name: Configure CMake
+      shell: bash
       run: |
-        $skiaUrl = "https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip"
-        $skiaDir = "$env:GITHUB_WORKSPACE\deps\skia"
-        
-        New-Item -Path $skiaDir -ItemType Directory -Force
-        Invoke-WebRequest -Uri $skiaUrl -OutFile skia.zip
-        7z x skia.zip -o"$skiaDir" -y -bso0
+        cmake -S . -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DENABLE_UI=${{ matrix.enable_ui }} \
+          -DENABLE_CCACHE=OFF \
+          -DLAF_BACKEND=skia \
+          -DSKIA_DIR=./skia \
+          -DSKIA_LIBRARY_DIR=./skia/out/Release-x64 \
+          -DSKIA_LIBRARY=./skia/out/Release-x64/skia.lib
 
-        # 验证 Skia 文件存在
-        if (-not (Test-Path "$skiaDir\skia.dll")) {
-          Write-Error "Skia 下载不完整!"
-          exit 1
-        }
+    # 编译项目
+    - name: Compile
+      shell: bash
+      run: cd build && ninja
 
-    - name: 创建构建目录
+    # 整理产物
+    - name: Prepare Artifacts
+      shell: bash
       run: |
-        mkdir build -Force
-        attrib -R build /S /D  # 强制清除只读属性
+        mkdir -p dist
+        cp libcrypto-1_1-x64.dll build/bin/aseprite.exe dist/
+        cp -r build/bin/data dist/
 
-    - name: 配置 CMake
-      shell: pwsh
-      working-directory: ${{ github.workspace }}\build
-      run: |
-        # 设置 MSVC 环境变量
-        $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        $vcvarsPath = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
-        
-        # 生成构建配置
-        & "${env:ProgramFiles}\CMake\bin\cmake.exe" -G "Ninja" `
-          -DCMAKE_MAKE_PROGRAM="$env:ChocolateyInstall\bin\ninja.exe" `
-          -DCMAKE_BUILD_TYPE=Release `
-          -DLAF_BACKEND=skia `
-          -DSKIA_DIR="$env:GITHUB_WORKSPACE\deps\skia" `
-          -DCMAKE_CXX_COMPILER="cl" `
-          -DCMAKE_C_COMPILER="cl" `
-          "$env:GITHUB_WORKSPACE"
-
-    - name: 编译 Aseprite
-      shell: pwsh
-      working-directory: ${{ github.workspace }}\build
-      run: |
-        & "${env:ChocolateyInstall}\bin\ninja.exe" -v aseprite  # -v 参数显示详细编译日志
-
-    - name: 收集运行时文件
-      run: |
-        Copy-Item -Path deps\skia\icudtl.dat -Destination build\bin
-        Copy-Item -Path deps\skia\*.dll -Destination build\bin
-
-    - name: 上传制品
-      uses: actions/upload-artifact@v4
+    # 上传成品
+    - uses: actions/upload-artifact@v3
       with:
-        name: asepprite-windows
-        path: |
-          build/bin/aseprite.exe
-          build/bin/*.dll
-          build/bin/icudtl.dat
+        name: aseprite-windows-x64
+        path: dist/*
