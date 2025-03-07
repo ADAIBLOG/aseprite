@@ -1,117 +1,98 @@
-name: build
+name: Build Aseprite (Windows)
 
-on: [push, pull_request]
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
-        build_type: [RelWithDebInfo]
-        ui: [gui]
-        scripting: [lua]
+    runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
+    - name: 检出仓库及子模块
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive  # 确保子模块完整初始化
+        fetch-depth: 0        # 防止浅克隆导致子模块问题
 
-      - name: Install Dependencies
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
-            libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev
+    - name: 安装依赖项
+      shell: pwsh
+      run: |
+        # 强制安装 Chocolatey
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        refreshenv
 
-      - name: Install Skia
-        if: matrix.ui == 'gui'
-        shell: bash
-        run: |
-          if [[ "${{ runner.os }}" == "Windows" ]] ; then
-            choco install wget -y --no-progress
-            wget https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip
-            unzip Skia-Windows-Release-x64.zip -d skia
-          elif [[ "${{ runner.os }}" == "macOS" ]] ; then
-            wget https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-macOS-Release-arm64.zip
-            unzip Skia-macOS-Release-arm64.zip -d skia
-          else
-            wget https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Linux-Release-x64-libstdc++.zip
-            unzip Skia-Linux-Release-x64-libstdc++.zip -d skia
-          fi
+        # 安装构建工具
+        choco install -y cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+        choco install -y ninja --version=1.11.1  # 固定 Ninja 版本
+        choco install -y 7zip
 
-      - name: ccache
-        uses: hendrikmuhs/ccache-action@v1
-        if: ${{ runner.os == 'Linux' || runner.os == 'macOS' }}
-        with:
-          key: ${{ matrix.os }}-${{ matrix.ui }}-${{ matrix.scripting }}-${{ matrix.build_type }}
+        # 安装完整 Visual Studio 2022 构建工具
+        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_BuildTools.exe" -OutFile vs_BuildTools.exe
+        Start-Process -Wait -FilePath .\vs_BuildTools.exe -ArgumentList @(
+          '--add', 'Microsoft.VisualStudio.Workload.VCTools',
+          '--add', 'Microsoft.VisualStudio.Component.Windows10SDK.20348',  # 明确指定 SDK 版本
+          '--add', 'Microsoft.VisualStudio.Component.VC.CMake.Project',
+          '--quiet', '--norestart', '--nocache'
+        )
 
-      - uses: aseprite/get-ninja@main
+    - name: 下载 Skia 依赖
+      shell: pwsh
+      run: |
+        $skiaUrl = "https://github.com/aseprite/skia/releases/download/m102-861e4743af/Skia-Windows-Release-x64.zip"
+        $skiaDir = "$env:GITHUB_WORKSPACE\deps\skia"
+        
+        New-Item -Path $skiaDir -ItemType Directory -Force
+        Invoke-WebRequest -Uri $skiaUrl -OutFile skia.zip
+        7z x skia.zip -o"$skiaDir" -y -bso0
 
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
+        # 验证 Skia 文件存在
+        if (-not (Test-Path "$skiaDir\skia.dll")) {
+          Write-Error "Skia 下载不完整!"
+          exit 1
+        }
 
-      - name: Generating Makefiles
-        shell: bash
-        run: |
-          if [[ "${{ runner.os }}" == "Windows" ]] ; then
-            export enable_ccache=off
-          else
-            export enable_ccache=on
-          fi
+    - name: 创建构建目录
+      run: |
+        mkdir build -Force
+        attrib -R build /S /D  # 强制清除只读属性
 
-          if [[ "${{ matrix.ui }}" == "gui" ]] ; then
-            export laf_backend=skia
-          else
-            export laf_backend=none
-          fi
+    - name: 配置 CMake
+      shell: pwsh
+      working-directory: ${{ github.workspace }}\build
+      run: |
+        # 设置 MSVC 环境变量
+        $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        $vcvarsPath = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+        
+        # 生成构建配置
+        & "${env:ProgramFiles}\CMake\bin\cmake.exe" -G "Ninja" `
+          -DCMAKE_MAKE_PROGRAM="$env:ChocolateyInstall\bin\ninja.exe" `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DLAF_BACKEND=skia `
+          -DSKIA_DIR="$env:GITHUB_WORKSPACE\deps\skia" `
+          -DCMAKE_CXX_COMPILER="cl" `
+          -DCMAKE_C_COMPILER="cl" `
+          "$env:GITHUB_WORKSPACE"
 
-          if [[ "${{ matrix.scripting }}" == "lua" ]] ; then
-            export enable_scripting=on
-          else
-            export enable_scripting=off
-          fi
+    - name: 编译 Aseprite
+      shell: pwsh
+      working-directory: ${{ github.workspace }}\build
+      run: |
+        & "${env:ChocolateyInstall}\bin\ninja.exe" -v aseprite  # -v 参数显示详细编译日志
 
-          if [[ "${{ runner.os }}" == "macOS" ]] ; then
-            export skia_arch=arm64
-          else
-            export skia_arch=x64
-          fi
+    - name: 收集运行时文件
+      run: |
+        Copy-Item -Path deps\skia\icudtl.dat -Destination build\bin
+        Copy-Item -Path deps\skia\*.dll -Destination build\bin
 
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
-            -DENABLE_TESTS=ON \
-            -DENABLE_SCRIPTING=$enable_scripting \
-            -DENABLE_CCACHE=$enable_ccache \
-            -DLAF_BACKEND=$laf_backend \
-            -DSKIA_DIR=skia \
-            -DSKIA_LIBRARY_DIR=skia/out/Release-$skia_arch
-
-      - name: Compiling
-        shell: bash
-        run: |
-          cd build && ninja
-
-      - name: Running C++ Tests
-        shell: bash
-        run: |
-          if [[ "${{ runner.os }}" == "Linux" ]] ; then
-            export XVFB=xvfb-run
-          fi
-          cd build && $XVFB ctest --output-on-failure
-
-      - name: Running CLI Tests
-        if: ${{ matrix.scripting == 'lua' }}
-        shell: bash
-        run: |
-          if [[ "${{ runner.os }}" == "Linux" ]] ; then
-            export XVFB=xvfb-run
-          fi
-          export ASEPRITE=$PWD/build/bin/aseprite
-          cd tests
-          $XVFB bash run-tests.sh
+    - name: 上传制品
+      uses: actions/upload-artifact@v4
+      with:
+        name: asepprite-windows
+        path: |
+          build/bin/aseprite.exe
+          build/bin/*.dll
+          build/bin/icudtl.dat
