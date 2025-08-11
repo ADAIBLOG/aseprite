@@ -1,4 +1,4 @@
-name: Build Aseprite (Windows) - Artifact Only
+name: Build Aseprite (Linux) - Artifact Only
 
 on:
   push:
@@ -11,9 +11,9 @@ env:
   BUILD_TYPE: Release
 
 jobs:
-  build-windows:
-    name: Build & Package Aseprite (Windows)
-    runs-on: windows-latest
+  build-linux:
+    name: Build & Package Aseprite (Linux)
+    runs-on: ubuntu-latest
     permissions:
       contents: read 
     steps:
@@ -24,25 +24,29 @@ jobs:
       - name: Install Dependencies
         shell: bash
         run: |
-          choco install wget 7zip -y --no-progress
+          # Linux 依赖安装（使用 apt）
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            wget p7zip-full \
+            libpixman-1-dev libfreetype6-dev libharfbuzz-dev zlib1g-dev \
+            libx11-dev libxcursor-dev libxi-dev libgl1-mesa-dev libfontconfig1-dev
 
       - name: Install Skia
         shell: bash
         run: |
-          wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Windows-Release-x64.zip
-          unzip Skia-Windows-Release-x64.zip -d skia
+          # 下载适用于 Linux x64 的 Skia 库
+          wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Linux-Release-x64.zip
+          unzip Skia-Linux-Release-x64.zip -d skia
 
-      - uses: aseprite/get-ninja@main
-
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: aseprite/get-ninja@main 
 
       - name: Generate Build Files
         shell: bash
         run: |
-          export enable_ccache=off
+          export enable_ccache=on  # Linux 支持 ccache 加速构建
           export laf_backend=skia
           export enable_scripting=on
-          export skia_arch=x64
+          export skia_arch=x64  # Linux 主流为 x64 架构
 
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
@@ -64,8 +68,8 @@ jobs:
             echo "Error: Build output directory not found!"
             exit 1
           fi
-          if [[ ! -f "build/bin/aseprite.exe" ]]; then
-            echo "Error: aseprite.exe not found in build output!"
+          if [[ ! -f "build/bin/aseprite" ]]; then
+            echo "Error: aseprite executable not found in build output!"
             exit 1
           fi
           ls -la build/bin
@@ -74,7 +78,7 @@ jobs:
         working-directory: build/bin
         shell: bash
         run: |
-          find . -mindepth 1 ! \( -name 'aseprite.exe' -o -name 'data' -prune \) -exec rm -rf {} +
+          find . -mindepth 1 ! \( -name 'aseprite' -o -name 'data' -prune \) -exec rm -rf {} +
           echo '# Portable mode' > aseprite.ini
 
       - name: Package as Zip
@@ -82,13 +86,13 @@ jobs:
         shell: bash
         run: |
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          7z -tzip a "Aseprite-Windows-${TIMESTAMP}.zip" *
+          7z -tzip a "Aseprite-Linux-${TIMESTAMP}.zip" *
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Aseprite-Windows-Build
-          path: build/bin/Aseprite-Windows-*.zip
+          name: Aseprite-Linux-Build
+          path: build/bin/Aseprite-Linux-*.zip
           retention-days: 30
           if-no-files-found: error 
-    
+
