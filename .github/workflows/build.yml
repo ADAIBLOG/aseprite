@@ -5,7 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:  # 支持手动触发构建
+  workflow_dispatch:  
 
 env:
   BUILD_TYPE: Release
@@ -15,7 +15,7 @@ jobs:
     name: Build & Package Aseprite (Windows)
     runs-on: windows-latest
     permissions:
-      contents: read  # 仅需读取权限
+      contents: read 
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,10 +85,10 @@ jobs:
           7z -tzip a "Aseprite-Windows-${TIMESTAMP}.zip" *
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4  # 已升级到最新的v4版本
+        uses: actions/upload-artifact@v4
         with:
           name: Aseprite-Windows-Build
           path: build/bin/Aseprite-Windows-*.zip
           retention-days: 30
-          if-no-files-found: error  # 如果没有找到文件则报错
-     
+          if-no-files-found: error 
+    
