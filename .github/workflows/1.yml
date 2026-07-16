@@ -1,0 +1,94 @@
+name: Build Aseprite (Windows) - Artifact Only
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # 支持手动触发构建
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-windows:
+    name: Build & Package Aseprite (Windows)
+    runs-on: windows-latest
+    permissions:
+      contents: read  # 仅需读取权限
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          choco install wget 7zip -y --no-progress
+
+      - name: Install Skia
+        shell: bash
+        run: |
+          wget https://github.com/aseprite/skia/releases/download/m124-08a5439a6b/Skia-Windows-Release-x64.zip
+          unzip Skia-Windows-Release-x64.zip -d skia
+
+      - uses: aseprite/get-ninja@main
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Generate Build Files
+        shell: bash
+        run: |
+          export enable_ccache=off
+          export laf_backend=skia
+          export enable_scripting=on
+          export skia_arch=x64
+
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DENABLE_TESTS=OFF \
+            -DENABLE_SCRIPTING=$enable_scripting \
+            -DENABLE_CCACHE=$enable_ccache \
+            -DLAF_BACKEND=$laf_backend \
+            -DSKIA_DIR=$(realpath skia) \
+            -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-$skia_arch)
+
+      - name: Compile Aseprite
+        shell: bash
+        run: cd build && ninja
+
+      - name: Verify Build Output
+        shell: bash
+        run: |
+          if [[ ! -d "build/bin" ]]; then
+            echo "Error: Build output directory not found!"
+            exit 1
+          fi
+          if [[ ! -f "build/bin/aseprite.exe" ]]; then
+            echo "Error: aseprite.exe not found in build output!"
+            exit 1
+          fi
+          ls -la build/bin
+
+      - name: Clean & Prepare Portable Package
+        working-directory: build/bin
+        shell: bash
+        run: |
+          find . -mindepth 1 ! \( -name 'aseprite.exe' -o -name 'data' -prune \) -exec rm -rf {} +
+          echo '# Portable mode' > aseprite.ini
+
+      - name: Package as Zip
+        working-directory: build/bin
+        shell: bash
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          7z -tzip a "Aseprite-Windows-${TIMESTAMP}.zip" *
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4  # 已升级到最新的v4版本
+        with:
+          name: Aseprite-Windows-Build
+          path: build/bin/Aseprite-Windows-*.zip
+          retention-days: 30
+          if-no-files-found: error  # 如果没有找到文件则报错
+     
